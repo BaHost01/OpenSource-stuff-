@@ -8,11 +8,11 @@
 ║   ██╔╝ ██╗██║ ╚═╝ ██║╚██████╗███████╗██║██████╔╝             ║
 ║   ╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝╚══════╝╚═╝╚═════╝             ║
 ║                                                               ║
-║   v2.2.0  ·  Memory-Safe · Touch-Ready · Dynamic ZIndex      ║
+║   v2.4.0  ·  Compact Refresh · Advanced Notifications · Dynamic ZIndex ║
 ║   Executor & LocalScript compatible                           ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-    CHANGELOG v2.2.0
+    CHANGELOG v2.4.0
     ─────────────────────────────────────────────────────────────
     [NEW] Toggle Ball — a draggable floating button (touch +
           mouse) that shows/hides all windows. Default icon:
@@ -35,6 +35,18 @@
           Drag module now handle Enum.UserInputType.Touch
           alongside mouse events everywhere.
 
+    [UPGRADE] Notification system remade — supports alias fields
+          (Label / Labels / Text / Message) and now auto-sizes
+          text blocks so titles and messages render reliably.
+
+    [NEW] Advanced notifications — configurable corners
+          (TopRight/TopLeft/BottomRight/BottomLeft), optional
+          click-to-dismiss, and action button callbacks.
+
+    [UPGRADE] Compact UI refresh — default window footprint
+          reduced for small screens (480×340), slimmer sidebar
+          and topbar for a cleaner minimal layout.
+
     [FIX] Dynamic ZIndex — panels and notifications no longer
           use hardcoded ZIndex values. Every window is assigned
           a base ZIndex tier; all children and floating panels
@@ -50,7 +62,8 @@ local Players          = game:GetService("Players")
 local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService      = game:GetService("HttpService")
-local Version = "0.3A"
+local TextService      = game:GetService("TextService")
+local Version = "0.5A"
 
 -- Badge map: Badge["BadgeName"] == true means this badge can be granted.
 local Badge = {
@@ -536,7 +549,7 @@ end
 -- ================================================================
 local XMCLib   = {}
 XMCLib.__index = XMCLib
-XMCLib._version = "2.2.5a"
+XMCLib._version = "2.4.0"
 
 function XMCLib.new()
     local self       = setmetatable({}, XMCLib)
@@ -744,15 +757,15 @@ end
 local Window = {}
 Window.__index = Window
 
-local SIDEBAR_W  = 120
-local TOPBAR_H   = 36
-local WIN_RADIUS = 12
+local SIDEBAR_W  = 108
+local TOPBAR_H   = 32
+local WIN_RADIUS = 10
 
 function XMCLib:CreateWindow(opts)
     opts  = type(opts) == "string" and { Title = opts } or (opts or {})
     local title = opts.Title  or "XMCLib"
-    local W     = opts.Width  or 520
-    local H     = opts.Height or 380
+    local W     = opts.Width  or 480
+    local H     = opts.Height or 340
     local pos   = opts.Position or UDim2.new(0.5, -W/2, 0.5, -H/2)
      injectconnector.isconf()
     injectconnector.attach()
@@ -2195,11 +2208,15 @@ end
 -- ================================================================
 function XMCLib:Notify(opts)
     opts = opts or {}
-    local title    = opts.Title    or "Notice"
-    local msg      = opts.Message  or ""
+    local title    = opts.Title or opts.Label or opts.Labels or "Notice"
+    local msg      = opts.Message or opts.Text or ""
     local duration = opts.Duration or 4
     local ntype    = opts.Type     or "info"
     local theme    = self.Theme
+
+    if type(msg) ~= "string" then msg = tostring(msg) end
+    if type(title) ~= "string" then title = tostring(title) end
+    if title == "" then title = "Notice" end
 
     local typeMap = {
         info    = { color = theme.Info,    icon = "ℹ" },
@@ -2210,32 +2227,47 @@ function XMCLib:Notify(opts)
     local t   = typeMap[ntype] or typeMap.info
     local col = t.color
 
-    local nW, nH = 300, 80
-    local margin  = 12
-    local q       = self._notifQueue
+    local titleSize = TextService:GetTextSize(title, 13, Enum.Font.GothamBold, Vector2.new(236, 200))
+    local msgSize   = TextService:GetTextSize(msg, 11, Enum.Font.Gotham, Vector2.new(236, 300))
+    local bodyHeight = Utility.Clamp(math.ceil(msgSize.Y), 18, 72)
+    local nW = opts.Width or 296
+    local nH = Utility.Clamp(44 + math.max(18, titleSize.Y) + bodyHeight, 82, 132)
+    local margin = 10
+    local q = self._notifQueue
 
-    local baseY = 0
+    local corner = string.lower(tostring(opts.Position or "BottomRight"))
+    local posConfig = {
+        topright =    { anchorX = 1, anchorY = 0, hiddenX = 24, shownX = -(nW + margin), ySign = 1, yStart = margin },
+        topleft =     { anchorX = 0, anchorY = 0, hiddenX = -(nW + 24), shownX = margin, ySign = 1, yStart = margin },
+        bottomleft =  { anchorX = 0, anchorY = 1, hiddenX = -(nW + 24), shownX = margin, ySign = -1, yStart = margin },
+        bottomright = { anchorX = 1, anchorY = 1, hiddenX = 24, shownX = -(nW + margin), ySign = -1, yStart = margin },
+    }
+    local cfg = posConfig[corner] or posConfig.bottomright
+
+    local stackOffset = 0
     for _, n in ipairs(q) do
-        if n and n.Parent then baseY = baseY + nH + margin end
+        if n and n.Parent and n:GetAttribute("StackCorner") == corner then
+            stackOffset = stackOffset + n.AbsoluteSize.Y + margin
+        end
     end
 
-    -- [FIX] Notifications use the dedicated high ZIndex tier, not a hardcoded 100.
     local NZ = ZIndexManager.NotifBase()
 
     local notif = Instance.new("Frame")
     notif.Name             = "XMCNotif"
     notif.Size             = UDim2.new(0, nW, 0, nH)
-    notif.Position         = UDim2.new(1, 20, 1, -(baseY + nH + margin))
+    notif.Position         = UDim2.new(cfg.anchorX, cfg.hiddenX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
     notif.BackgroundColor3 = theme.Surface2
     notif.BorderSizePixel  = 0
     notif.ZIndex           = NZ
     notif.Parent           = self._gui
+    notif:SetAttribute("StackCorner", corner)
     Utility.Corner(notif, 10)
     Utility.Stroke(notif, col:Lerp(theme.Border1, 0.5), 1)
 
     local bar = Instance.new("Frame")
-    bar.Size             = UDim2.new(0, 4, 1, -16)
-    bar.Position         = UDim2.new(0, 6, 0, 8)
+    bar.Size             = UDim2.new(0, 3, 1, -12)
+    bar.Position         = UDim2.new(0, 6, 0, 6)
     bar.BackgroundColor3 = col
     bar.BorderSizePixel  = 0
     bar.ZIndex           = NZ + 1
@@ -2243,53 +2275,93 @@ function XMCLib:Notify(opts)
     Utility.Corner(bar, 2)
 
     local iconBg = Instance.new("Frame")
-    iconBg.Size             = UDim2.new(0, 30, 0, 30)
-    iconBg.Position         = UDim2.new(0, 18, 0.5, -15)
+    iconBg.Size             = UDim2.new(0, 24, 0, 24)
+    iconBg.Position         = UDim2.new(0, 14, 0, 10)
     iconBg.BackgroundColor3 = col
     iconBg.BackgroundTransparency = 0.82
     iconBg.BorderSizePixel  = 0
     iconBg.ZIndex           = NZ + 1
     iconBg.Parent           = notif
-    Utility.Corner(iconBg, 15)
+    Utility.Corner(iconBg, 12)
 
     local iconLbl = Instance.new("TextLabel")
     iconLbl.Size            = UDim2.new(1, 0, 1, 0)
     iconLbl.BackgroundTransparency = 1
     iconLbl.Text            = t.icon
     iconLbl.TextColor3      = col
-    iconLbl.TextSize        = 14
+    iconLbl.TextSize        = 12
     iconLbl.Font            = Enum.Font.GothamBold
-    iconLbl.ZIndex          = NZ + 5
+    iconLbl.ZIndex          = NZ + 2
     iconLbl.Parent          = iconBg
 
+    local textWrap = Instance.new("Frame")
+    textWrap.Name              = "TextWrap"
+    textWrap.Size              = UDim2.new(1, -52, 1, -20)
+    textWrap.Position          = UDim2.new(0, 42, 0, 10)
+    textWrap.BackgroundTransparency = 1
+    textWrap.ZIndex            = NZ + 1
+    textWrap.Parent            = notif
+
+    local textLayout = Instance.new("UIListLayout")
+    textLayout.FillDirection = Enum.FillDirection.Vertical
+    textLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
+    textLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    textLayout.Padding = UDim.new(0, 2)
+    textLayout.Parent = textWrap
+
     local tLbl = Instance.new("TextLabel")
-    tLbl.Size           = UDim2.new(1, -68, 0, 22)
-    tLbl.Position       = UDim2.new(0, 58, 0, 12)
+    tLbl.Size           = UDim2.new(1, 0, 0, 18)
     tLbl.BackgroundTransparency = 1
     tLbl.Text           = title
     tLbl.TextColor3     = col
-    tLbl.TextSize       = 13
+    tLbl.TextSize       = 12
     tLbl.Font           = Enum.Font.GothamBold
     tLbl.TextXAlignment = Enum.TextXAlignment.Left
-    tLbl.ZIndex         = NZ + 1
-    tLbl.Parent         = notif
+    tLbl.TextYAlignment = Enum.TextYAlignment.Top
+    tLbl.TextTruncate   = Enum.TextTruncate.AtEnd
+    tLbl.ZIndex         = NZ + 2
+    tLbl.LayoutOrder    = 1
+    tLbl.Parent         = textWrap
 
     local mLbl = Instance.new("TextLabel")
-    mLbl.Size           = UDim2.new(1, -68, 0, 28)
-    mLbl.Position       = UDim2.new(0, 58, 0, 32)
+    mLbl.Size           = UDim2.new(1, 0, 0, bodyHeight)
     mLbl.BackgroundTransparency = 1
     mLbl.Text           = msg
     mLbl.TextColor3     = theme.TextSecondary
     mLbl.TextSize       = 11
     mLbl.Font           = Enum.Font.Gotham
     mLbl.TextXAlignment = Enum.TextXAlignment.Left
+    mLbl.TextYAlignment = Enum.TextYAlignment.Top
     mLbl.TextWrapped    = true
-    mLbl.ZIndex         = NZ + 4
-    mLbl.Parent         = notif
+    mLbl.ZIndex         = NZ + 2
+    mLbl.LayoutOrder    = 2
+    mLbl.Parent         = textWrap
+
+    local actionText = opts.ActionText
+    local actionCb = opts.ActionCallback
+    if actionText and type(actionText) == "string" and actionText ~= "" and type(actionCb) == "function" then
+        local actionBtn = Instance.new("TextButton")
+        actionBtn.Size = UDim2.new(0, 70, 0, 20)
+        actionBtn.Position = UDim2.new(1, -78, 1, -24)
+        actionBtn.BackgroundColor3 = col
+        actionBtn.BackgroundTransparency = 0.8
+        actionBtn.BorderSizePixel = 0
+        actionBtn.Text = actionText
+        actionBtn.Font = Enum.Font.GothamMedium
+        actionBtn.TextSize = 10
+        actionBtn.TextColor3 = col
+        actionBtn.ZIndex = NZ + 3
+        actionBtn.Parent = notif
+        Utility.Corner(actionBtn, 8)
+
+        actionBtn.MouseButton1Click:Connect(function()
+            Utility.SafeCall(actionCb)
+        end)
+    end
 
     local pgBg = Instance.new("Frame")
-    pgBg.Size             = UDim2.new(1, -20, 0, 2)
-    pgBg.Position         = UDim2.new(0, 10, 1, -6)
+    pgBg.Size             = UDim2.new(1, -14, 0, 2)
+    pgBg.Position         = UDim2.new(0, 7, 1, -5)
     pgBg.BackgroundColor3 = theme.Border1
     pgBg.BorderSizePixel  = 0
     pgBg.ZIndex           = NZ + 1
@@ -2306,20 +2378,35 @@ function XMCLib:Notify(opts)
 
     table.insert(q, notif)
 
-    Utility.Tween(notif, TweenInfo.new(0.32, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
-        { Position = UDim2.new(1, -(nW + margin), 1, -(baseY + nH + margin)) })
-    Utility.Tween(pgFill, TweenInfo.new(duration, Enum.EasingStyle.Linear),
-        { Size = UDim2.new(0, 0, 1, 0) })
+    local function getShownPos()
+        return UDim2.new(cfg.anchorX, cfg.shownX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
+    end
+    local function getHiddenPos()
+        return UDim2.new(cfg.anchorX, cfg.hiddenX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
+    end
 
-    task.delay(duration, function()
-        Utility.Tween(notif, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
-            { Position = UDim2.new(1, 20, 1, -(baseY + nH + margin)) })
+    local dismissed = false
+    local function dismiss()
+        if dismissed then return end
+        dismissed = true
+        Utility.Tween(notif, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.In), { Position = getHiddenPos() })
         local idx = table.find(q, notif)
         if idx then table.remove(q, idx) end
-        task.delay(0.32, function()
+        task.delay(0.24, function()
             if notif and notif.Parent then notif:Destroy() end
         end)
-    end)
+    end
+
+    Utility.Tween(notif, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = getShownPos() })
+    Utility.Tween(pgFill, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) })
+
+    if opts.CloseOnClick ~= false then
+        notif.InputBegan:Connect(function(input)
+            if Utility.IsPrimaryPress(input.UserInputType) then dismiss() end
+        end)
+    end
+
+    task.delay(duration, dismiss)
 
     return notif
 end
