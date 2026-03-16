@@ -116,7 +116,9 @@ function attacher.attach()
     -- start proc:
     -- DO NOT CHANGE THIS IF YOU DONT KNOW WHAT YOU ARE DOING.
     if not isfolder("XMCLib") then
-    makefolder("XMCLib") -- INIT 
+    makefolder("XMCLib") -- INIT
+
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/BaHost01/OpenSource-stuff-/refs/heads/main/MainFrame/Open/AutoUpdateUILib.lua"))()
 end
 writefile("XMCLib/config.conf", "debug")
 
@@ -2335,4 +2337,8 @@ end
 -- ================================================================
 -- ENTRY POINT
 -- ===============================================================
+function XMCLib.version()
+    print(Version)
+    return Version
+end
 return XMCLib.new()
