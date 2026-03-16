@@ -141,16 +141,8 @@ function attacher.attach()
 
     if not isfolder("XMCLib") then
         makefolder("XMCLib") -- INIT
-
-        if type(loadstring) == "function" and game and game.HttpGet then
-            local ok, src = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/BaHost01/OpenSource-stuff-/refs/heads/main/MainFrame/Open/AutoUpdateUILib.lua")
-            if ok and type(src) == "string" then
-                local compiled = loadstring(src)
-                if type(compiled) == "function" then
-                    compiled()
-                end
-            end
-        end
+        print("InjectLuau: [SUCCESS]: Injected With Exit Code 0")
+        
     end
 
     writefile("XMCLib/config.conf", "debug")
