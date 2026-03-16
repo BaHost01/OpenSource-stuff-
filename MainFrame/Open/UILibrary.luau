@@ -110,31 +110,50 @@ local LocalPlayer = Players.LocalPlayer
 local attacher = {}
 local injectconnector = {}
 
+local function hasFileApi()
+    return type(isfile) == "function"
+        and type(isfolder) == "function"
+        and type(makefolder) == "function"
+        and type(writefile) == "function"
+        and type(appendfile) == "function"
+end
+
 function injectconnector.isconf()
-    if isfile("XMCLib/config.conf") then
-    print("Arquivo existe")
+    if not hasFileApi() then return false end
+    return isfile("XMCLib/config.conf")
 end
 
-end
 function injectconnector.confcontent()
-  local content = readfile("XMCLib/config.conf")
-print(content)
+    if not injectconnector.isconf() or type(readfile) ~= "function" then return nil end
+    return readfile("XMCLib/config.conf")
 end
-function injectconnector.write(string: StringValue)
-  appendfile("XMCLib/config.conf", "\n"..string)
-end
-function attacher.attach()
-     -- start an error and warning logger
 
+function injectconnector.write(value: string)
+    if not hasFileApi() then return end
+    appendfile("XMCLib/config.conf", "\n" .. value)
+end
+
+function attacher.attach()
+    -- start an error and warning logger
     -- start proc:
     -- DO NOT CHANGE THIS IF YOU DONT KNOW WHAT YOU ARE DOING.
+    if not hasFileApi() then return end
+
     if not isfolder("XMCLib") then
-    makefolder("XMCLib") -- INIT
+        makefolder("XMCLib") -- INIT
 
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/BaHost01/OpenSource-stuff-/refs/heads/main/MainFrame/Open/AutoUpdateUILib.lua"))()
-end
-writefile("XMCLib/config.conf", "debug")
+        if type(loadstring) == "function" and game and game.HttpGet then
+            local ok, src = pcall(game.HttpGet, game, "https://raw.githubusercontent.com/BaHost01/OpenSource-stuff-/refs/heads/main/MainFrame/Open/AutoUpdateUILib.lua")
+            if ok and type(src) == "string" then
+                local compiled = loadstring(src)
+                if type(compiled) == "function" then
+                    compiled()
+                end
+            end
+        end
+    end
 
+    writefile("XMCLib/config.conf", "debug")
 end
 function attacher.detach()
     -- ends the error and warning logger and writes it into an file (NOT MADS YET.)
@@ -767,10 +786,9 @@ function XMCLib:CreateWindow(opts)
     local W     = opts.Width  or 480
     local H     = opts.Height or 340
     local pos   = opts.Position or UDim2.new(0.5, -W/2, 0.5, -H/2)
-     injectconnector.isconf()
-    injectconnector.attach()
+    attacher.attach()
     injectconnector.write("StarterFuncUI Not Crashed -- // [LOG]")
-  local win = setmetatable({}, Window)
+    local win = setmetatable({}, Window)
     win._lib         = self
     win._tabs        = {}
     win._activeTab   = nil
