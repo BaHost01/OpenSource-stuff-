@@ -1098,7 +1098,28 @@ local Tab = {}
 Tab.__index = Tab
 
 function Window:CreateTab(name, icon)
-    name = name or "Tab"
+    -- Supports both legacy signatures:
+    --   CreateTab("Main", "🏠")
+    -- and option-table style:
+    --   CreateTab({ Name = "Main", Icon = "🏠" })
+    if type(name) == "table" then
+        local opts = name
+        name = opts.Name or opts.Title or opts.Text or opts.Tab or "Tab"
+        icon = opts.Icon or opts.Image or opts.Symbol or icon
+    end
+
+    if name == nil or name == "" then
+        name = "Tab"
+    else
+        name = tostring(name)
+    end
+
+    if icon ~= nil and icon ~= "" then
+        icon = tostring(icon)
+    else
+        icon = nil
+    end
+
     local win   = self
     local lib   = self._lib
     local theme = lib.Theme
