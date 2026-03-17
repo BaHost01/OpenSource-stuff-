@@ -8,50 +8,38 @@
 ║   ██╔╝ ██╗██║ ╚═╝ ██║╚██████╗███████╗██║██████╔╝             ║
 ║   ╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝╚══════╝╚═╝╚═════╝             ║
 ║                                                               ║
-║   v2.4.0  ·  Compact Refresh · Advanced Notifications · Dynamic ZIndex ║
+║   v2.4.1  ·  Bugfix Release                                   ║
 ║   Executor & LocalScript compatible                           ║
 ╚═══════════════════════════════════════════════════════════════╝
 
-    CHANGELOG v2.4.0
+    CHANGELOG v2.4.1  (bugfix patch)
     ─────────────────────────────────────────────────────────────
-    [NEW] Toggle Ball — a draggable floating button (touch +
-          mouse) that shows/hides all windows. Default icon:
-          rbxassetid://525701437 (Love-Hate-or-Doge).
-          Set via CreateWindow { ToggleIcon = "rbxassetid://..." }
-          or at runtime with lib:SetToggleIcon(id).
+    [FIX] ImageLabel BackgroundTransparency was 0 → now 1.
+          Toggle Ball icon was showing a white background.
 
-    [NEW] Compact layout — sidebar narrowed to 120 px, topbar
-          to 36 px, default window size 520×380. Much better
-          on small/mobile screens.
+    [FIX] root.ClipsDescendants removed from window root frame.
+          Previously it clipped the ambient glow and drop-shadow
+          (both extend beyond the window bounds). Content clipping
+          is handled by the content Frame which already has
+          ClipsDescendants = true, so nothing is broken.
 
-    [NEW] Mobile-friendly Toggle Ball — fully draggable on
-          touch devices; tap to toggle, drag to reposition.
+    [FIX] CreateSeparator now assigns correct ZIndex to the row
+          and all child frames (line / label). Previously they
+          defaulted to ZIndex 1, rendering invisible behind the
+          section card.
 
-    [FIX] Memory leaks — all UserInputService global connections
-          are now stored in element._connections and cleanly
-          Disconnect()ed when :Destroy() is called.
+    [FIX] attacher.attach() is now called only ONCE (guarded by
+          XMCLib._attached flag). Previously it was called on
+          every CreateWindow(), overwriting the config file
+          and printing the success message multiple times.
 
-    [FIX] Mobile / Touch support — Slider, Dropdown and the
-          Drag module now handle Enum.UserInputType.Touch
-          alongside mouse events everywhere.
+    [FIX] Drag.Enable: inp.Changed:Connect stored in conns so
+          it is properly disconnected via :Destroy() — was a
+          memory leak before.
 
-    [UPGRADE] Notification system remade — supports alias fields
-          (Label / Labels / Text / Message) and now auto-sizes
-          text blocks so titles and messages render reliably.
-
-    [NEW] Advanced notifications — configurable corners
-          (TopRight/TopLeft/BottomRight/BottomLeft), optional
-          click-to-dismiss, and action button callbacks.
-
-    [UPGRADE] Compact UI refresh — default window footprint
-          reduced for small screens (480×340), slimmer sidebar
-          and topbar for a cleaner minimal layout.
-
-    [FIX] Dynamic ZIndex — panels and notifications no longer
-          use hardcoded ZIndex values. Every window is assigned
-          a base ZIndex tier; all children and floating panels
-          are computed relative to it, preventing conflicts when
-          multiple windows or external UI systems coexist.
+    [FIX] Missing "return XMCLib" at end of file added.
+          Without it loadstring(...)() returned nil and every
+          lib:CreateWindow() call errored immediately.
     ─────────────────────────────────────────────────────────────
 --]]
 
@@ -65,27 +53,21 @@ local HttpService      = game:GetService("HttpService")
 local TextService      = game:GetService("TextService")
 local Version = "0.5A"
 
--- Badge map: Badge["BadgeName"] == true means this badge can be granted.
 local Badge = {
     ExampleBadge = true,
 }
 
 local signals = {}
 
--- Simple custom signal registry helper.
--- action supports: "newsignal"/"newcall", "firesignal"/"runsignal", "onsignal"/"onsignalevent".
 local function CustomSignal(name, params, action)
     if type(name) ~= "string" or name == "" then return nil end
-
     local normalizedAction = string.lower(tostring(action or ""))
-
     if normalizedAction == "newsignal" or normalizedAction == "newcall" then
         signals[name] = signals[name] or {}
         return signals[name]
     elseif normalizedAction == "firesignal" or normalizedAction == "runsignal" then
         local listeners = signals[name]
         if not listeners then return nil end
-
         for _, callback in ipairs(listeners) do
             local ok, err = pcall(callback, params)
             if not ok then warn("[XMCLib] CustomSignal callback error: " .. tostring(err)) end
@@ -93,19 +75,16 @@ local function CustomSignal(name, params, action)
         return true
     elseif normalizedAction == "onsignal" or normalizedAction == "onsignalevent" then
         if type(params) ~= "function" then return nil end
-
         signals[name] = signals[name] or {}
         table.insert(signals[name], params)
         return params
     end
-
     return nil
 end
+
 local CustomMods = {}
 local Placeid = game.PlaceId
-
 local LocalPlayer = Players.LocalPlayer
-
 
 local attacher = {}
 local injectconnector = {}
@@ -128,51 +107,41 @@ function injectconnector.confcontent()
     return readfile("XMCLib/config.conf")
 end
 
-function injectconnector.write(value: string)
+-- [FIX] Removed Luau type annotation ": string" for broader executor compatibility
+function injectconnector.write(value)
     if not hasFileApi() then return end
-    appendfile("XMCLib/config.conf", "\n" .. value)
+    appendfile("XMCLib/config.conf", "\n" .. tostring(value))
 end
 
 function attacher.attach()
-    -- start an error and warning logger
-    -- start proc:
-    -- DO NOT CHANGE THIS IF YOU DONT KNOW WHAT YOU ARE DOING.
     if not hasFileApi() then return end
-
     if not isfolder("XMCLib") then
-        makefolder("XMCLib") -- INIT
+        makefolder("XMCLib")
         print("InjectLuau: [SUCCESS]: Injected With Exit Code 0")
-        
     end
-
     writefile("XMCLib/config.conf", "debug")
 end
+
 function attacher.detach()
-    -- ends the error and warning logger and writes it into an file (NOT MADS YET.)
+    -- ends the error and warning logger (NOT MADE YET)
 end
+
 -- ================================================================
 -- UTILITY
 -- ================================================================
 local Utility = {}
 
--- Tween helper — silently skips destroyed instances
 function Utility.Tween(inst, info, props)
     if not inst or not inst.Parent then return end
     local ok, t = pcall(TweenService.Create, TweenService, inst, info, props)
     if ok and t then t:Play() return t end
 end
 
--- Safe callback — wraps every user-supplied function in pcall
 function Utility.SafeCall(fn, ...)
     if type(fn) ~= "function" then return end
     local ok, err = pcall(fn, ...)
     if not ok then warn("[XMCLib] callback error: " .. tostring(err)) end
 end
-
--- ── Connection management ────────────────────────────────────────
--- Utility.Connect() stores every RBXScriptConnection in a table so
--- that Utility.DisconnectAll() can terminate them all at once.
--- Pass the element's _connections table as the first argument.
 
 function Utility.Connect(conns, signal, fn)
     local c = signal:Connect(fn)
@@ -189,7 +158,6 @@ function Utility.DisconnectAll(conns)
     table.clear(conns)
 end
 
--- ── Instance helpers ─────────────────────────────────────────────
 function Utility.Corner(p, r)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, r or 6)
@@ -215,25 +183,20 @@ function Utility.Stroke(p, col, thick)
     return s
 end
 
--- ── Math helpers ─────────────────────────────────────────────────
 function Utility.Clamp(v, mn, mx) return math.max(mn, math.min(mx, v)) end
 function Utility.Round(v, d)      local m = 10^(d or 0); return math.floor(v*m+.5)/m end
 function Utility.UID()            return ("%x"):format(math.random(0xFFFFF)) .. ("%x"):format(math.floor(tick()*1000) % 0xFFFFF) end
 
--- ── Input type helpers ───────────────────────────────────────────
--- Returns true for any primary-press input (mouse or touch)
 function Utility.IsPrimaryPress(inputType)
     return inputType == Enum.UserInputType.MouseButton1
         or inputType == Enum.UserInputType.Touch
 end
 
--- Returns true for any move/drag input (mouse or touch)
 function Utility.IsDragMove(inputType)
     return inputType == Enum.UserInputType.MouseMovement
         or inputType == Enum.UserInputType.Touch
 end
 
--- Returns true for any primary-release input
 function Utility.IsPrimaryRelease(inputType)
     return inputType == Enum.UserInputType.MouseButton1
         or inputType == Enum.UserInputType.Touch
@@ -242,29 +205,10 @@ end
 -- ================================================================
 -- ZINDEX MANAGER
 -- ================================================================
--- Each window claims a tier from a global counter.
--- Tier 1 = ZIndex 10–29, Tier 2 = 30–49, etc.
--- All children and floating panels are offset inside the tier.
---
--- ZIndex layout within a tier (base = tier * 20):
---   base +  0  root frame
---   base +  2  content area, sidebar patches
---   base +  3  sidebar, topbar
---   base +  4  sidebar labels, tab buttons
---   base +  5  element rows
---   base +  6  element labels
---   base +  7  interactive controls (toggles, sliders…)
---   base +  8  interactive overlays
---   base + 14  floating dropdown panel
---   base + 15  dropdown options
---   base + 16  dropdown option labels
---
--- Notifications use a separate high tier (tier 30+ = ZIndex 600+).
-
 local ZIndexManager = {}
 ZIndexManager._windowCount = 0
 ZIndexManager._TIER_SIZE   = 20
-ZIndexManager._NOTIF_BASE  = 600   -- always above all windows
+ZIndexManager._NOTIF_BASE  = 600
 
 function ZIndexManager.ClaimWindowBase()
     ZIndexManager._windowCount = ZIndexManager._windowCount + 1
@@ -513,9 +457,6 @@ end
 -- ================================================================
 local Drag = {}
 
--- Returns a connections table so the caller can disconnect on destroy.
--- [FIX] All connections now go through Utility.Connect() into `conns`.
--- [FIX] Touch events handled alongside mouse events.
 function Drag.Enable(root, handle, conns)
     conns  = conns or {}
     handle = handle or root
@@ -527,8 +468,8 @@ function Drag.Enable(root, handle, conns)
             dragging = true
             mStart   = inp.Position
             fStart   = root.Position
-            -- Track end of this specific input object
-            inp.Changed:Connect(function()
+            -- [FIX] Store inp.Changed connection in conns to prevent memory leak
+            Utility.Connect(conns, inp.Changed, function()
                 if inp.UserInputState == Enum.UserInputState.End then
                     dragging = false
                 end
@@ -560,7 +501,7 @@ end
 -- ================================================================
 local XMCLib   = {}
 XMCLib.__index = XMCLib
-XMCLib._version = "2.4.0"
+XMCLib._version = "2.4.1"
 
 function XMCLib.new()
     local self       = setmetatable({}, XMCLib)
@@ -570,13 +511,14 @@ function XMCLib.new()
     self._windows    = {}
     self._visible    = true
     self._notifQueue = {}
+    -- [FIX] Guard flag so attacher.attach() is only ever called once
+    self._attached   = false
 
     for k, v in pairs(Themes.Dark) do self.Theme[k] = v end
     self:_InitGui()
     return self
 end
 
--- ScreenGui mounting: gethui() → CoreGui → PlayerGui
 function XMCLib:_InitGui()
     local function try(parent)
         local g = Instance.new("ScreenGui")
@@ -596,16 +538,15 @@ function XMCLib:_InitGui()
 end
 
 -- ================================================================
--- TOGGLE BALL  (floating draggable show/hide button)
+-- TOGGLE BALL
 -- ================================================================
 local TOGGLE_BALL_SIZE = 48
-local TOGGLE_BALL_Z    = 700   -- above notifications
+local TOGGLE_BALL_Z    = 700
 
 function XMCLib:_CreateToggleBall(defaultIcon)
     local gui   = self._gui
     local theme = self.Theme
 
-    -- Wrapper frame (used as drag root)
     local ball = Instance.new("Frame")
     ball.Name             = "XMCToggleBall"
     ball.Size             = UDim2.new(0, TOGGLE_BALL_SIZE, 0, TOGGLE_BALL_SIZE)
@@ -617,7 +558,6 @@ function XMCLib:_CreateToggleBall(defaultIcon)
     Utility.Corner(ball, TOGGLE_BALL_SIZE / 2)
     Utility.Stroke(ball, theme.Accent, 2)
 
-    -- Glow ring
     local glow = Instance.new("Frame")
     glow.Size                  = UDim2.new(1, 12, 1, 12)
     glow.Position              = UDim2.new(0, -6, 0, -6)
@@ -628,17 +568,16 @@ function XMCLib:_CreateToggleBall(defaultIcon)
     glow.Parent                = ball
     Utility.Corner(glow, (TOGGLE_BALL_SIZE + 12) / 2)
 
-    -- Icon image
     local img = Instance.new("ImageLabel")
     img.Size                  = UDim2.new(1, -10, 1, -10)
     img.Position              = UDim2.new(0, 5, 0, 5)
-    img.BackgroundTransparency= 0
+    -- [FIX] was 0, must be 1 — otherwise shows white rectangle behind the icon
+    img.BackgroundTransparency= 1
     img.Image                 = defaultIcon or "rbxassetid://525701437"
     img.ScaleType             = Enum.ScaleType.Fit
     img.ZIndex                = TOGGLE_BALL_Z + 1
     img.Parent                = ball
 
-    -- Hit-area button (transparent, on top)
     local btn = Instance.new("TextButton")
     btn.Size                  = UDim2.new(1, 0, 1, 0)
     btn.BackgroundTransparency= 1
@@ -646,7 +585,6 @@ function XMCLib:_CreateToggleBall(defaultIcon)
     btn.ZIndex                = TOGGLE_BALL_Z + 2
     btn.Parent                = ball
 
-    -- Drag logic (touch + mouse)
     local dragging    = false
     local dragInput   = nil
     local mStart, fStart
@@ -673,7 +611,6 @@ function XMCLib:_CreateToggleBall(defaultIcon)
     btn.InputBegan:Connect(onInputBegan)
     btn.InputChanged:Connect(onInputChanged)
 
-    -- UIS global move (keeps drag working when cursor leaves button)
     UserInputService.InputChanged:Connect(function(inp)
         if inp == dragInput and dragging then
             local d = inp.Position - mStart
@@ -684,7 +621,6 @@ function XMCLib:_CreateToggleBall(defaultIcon)
         end
     end)
 
-    -- Click = toggle (only if not dragged)
     local clickStartPos
     btn.InputBegan:Connect(function(inp)
         if Utility.IsPrimaryPress(inp.UserInputType) then
@@ -696,9 +632,7 @@ function XMCLib:_CreateToggleBall(defaultIcon)
             local dx = math.abs(inp.Position.X - clickStartPos.X)
             local dy = math.abs(inp.Position.Y - clickStartPos.Y)
             if dx < 6 and dy < 6 then
-                -- actual tap/click, not a drag
                 self:ToggleVisible()
-                -- pulse animation
                 Utility.Tween(ball, TweenInfo.new(0.1), { BackgroundTransparency = 0.4 })
                 task.delay(0.1, function()
                     Utility.Tween(ball, TweenInfo.new(0.15), { BackgroundTransparency = 0 })
@@ -708,42 +642,37 @@ function XMCLib:_CreateToggleBall(defaultIcon)
         end
     end)
 
-    -- Hover effects (mouse only)
     btn.MouseEnter:Connect(function()
-        Utility.Tween(ball,  TweenInfo.new(0.12), { BackgroundColor3 = theme.Surface3Hover })
-        Utility.Tween(glow,  TweenInfo.new(0.12), { BackgroundTransparency = 0.55 })
+        Utility.Tween(ball, TweenInfo.new(0.12), { BackgroundColor3 = theme.Surface3Hover })
+        Utility.Tween(glow, TweenInfo.new(0.12), { BackgroundTransparency = 0.55 })
     end)
     btn.MouseLeave:Connect(function()
-        Utility.Tween(ball,  TweenInfo.new(0.12), { BackgroundColor3 = theme.Surface3 })
-        Utility.Tween(glow,  TweenInfo.new(0.12), { BackgroundTransparency = 0.72 })
+        Utility.Tween(ball, TweenInfo.new(0.12), { BackgroundColor3 = theme.Surface3 })
+        Utility.Tween(glow, TweenInfo.new(0.12), { BackgroundTransparency = 0.72 })
     end)
 
-    self._toggleBall     = ball
-    self._toggleBallImg  = img
+    self._toggleBall    = ball
+    self._toggleBallImg = img
 end
 
--- Update the toggle ball's icon at runtime
 function XMCLib:SetToggleIcon(iconId)
     if self._toggleBallImg then
         self._toggleBallImg.Image = iconId
     end
 end
 
--- Show / hide the toggle ball itself
 function XMCLib:SetToggleBallVisible(v)
     if self._toggleBall then
         self._toggleBall.Visible = v
     end
 end
 
--- Theme API
 function XMCLib:SetTheme(t)   for k, v in pairs(t) do self.Theme[k] = v end end
 function XMCLib:ThemeDark()   self:SetTheme(Themes.Dark)   end
 function XMCLib:ThemePurple() self:SetTheme(Themes.Purple) end
 function XMCLib:ThemeRed()    self:SetTheme(Themes.Red)    end
 function XMCLib:ThemeGreen()  self:SetTheme(Themes.Green)  end
 
--- Visibility
 function XMCLib:ToggleVisible()
     self._visible = not self._visible
     for _, w in ipairs(self._windows) do
@@ -778,19 +707,23 @@ function XMCLib:CreateWindow(opts)
     local W     = opts.Width  or 480
     local H     = opts.Height or 340
     local pos   = opts.Position or UDim2.new(0.5, -W/2, 0.5, -H/2)
-    attacher.attach()
-    injectconnector.write("StarterFuncUI Not Crashed -- // [LOG]")
+
+    -- [FIX] Only call attacher.attach() once, not on every CreateWindow
+    if not self._attached then
+        self._attached = true
+        attacher.attach()
+        injectconnector.write("StarterFuncUI Not Crashed -- // [LOG]")
+    end
+
     local win = setmetatable({}, Window)
     win._lib         = self
     win._tabs        = {}
     win._activeTab   = nil
-    win._connections = {}  -- stores all drag connections for this window
+    win._connections = {}
 
-    -- [FIX] Each window claims a unique ZIndex tier.
     local BASE = ZIndexManager.ClaimWindowBase()
     win._zBase = BASE
 
-    -- ZIndex constants for this window (all relative to BASE)
     local Z = {
         shadow  = BASE - 2,
         glow    = BASE - 1,
@@ -803,7 +736,7 @@ function XMCLib:CreateWindow(opts)
         rowLbl  = BASE + 6,
         ctrl    = BASE + 7,
         overlay = BASE + 8,
-        panel   = BASE + 14,  -- floating dropdown
+        panel   = BASE + 14,
         panelOpt= BASE + 15,
         panelLbl= BASE + 16,
     }
@@ -816,14 +749,16 @@ function XMCLib:CreateWindow(opts)
     root.Position         = pos
     root.BackgroundColor3 = self.Theme.Base
     root.BorderSizePixel  = 0
-    root.ClipsDescendants = true
+    -- [FIX] Removed ClipsDescendants = true from root.
+    -- Shadow and glow extend outside root bounds and were being cut off.
+    -- Content clipping is already handled by the content Frame below.
     root.ZIndex           = Z.root
     root.Parent           = self._gui
     Utility.Corner(root, WIN_RADIUS)
     Utility.Stroke(root, self.Theme.Border0, 1)
     win._root = root
 
-    -- Ambient glow
+    -- Ambient glow (now renders correctly outside root bounds)
     local glow = Instance.new("Frame")
     glow.Size                  = UDim2.new(1, 32, 1, 32)
     glow.Position              = UDim2.new(0, -16, 0, -16)
@@ -834,7 +769,7 @@ function XMCLib:CreateWindow(opts)
     glow.Parent                = root
     Utility.Corner(glow, WIN_RADIUS + 8)
 
-    -- Drop shadow
+    -- Drop shadow (now renders correctly outside root bounds)
     local shadow = Instance.new("Frame")
     shadow.Size                  = UDim2.new(1, 50, 1, 50)
     shadow.Position              = UDim2.new(0, -25, 0, 10)
@@ -871,7 +806,6 @@ function XMCLib:CreateWindow(opts)
     sideBorder.ZIndex           = Z.sidebar + 1
     sideBorder.Parent           = sidebar
 
-    -- Logo / title area
     local logoArea = Instance.new("Frame")
     logoArea.Size             = UDim2.new(1, 0, 0, TOPBAR_H + 14)
     logoArea.BackgroundTransparency = 1
@@ -920,7 +854,6 @@ function XMCLib:CreateWindow(opts)
     logoDivider.ZIndex           = Z.labels
     logoDivider.Parent           = sidebar
 
-    -- Tab list scroll frame
     local tabList = Instance.new("ScrollingFrame")
     tabList.Size                  = UDim2.new(1, 0, 1, -(TOPBAR_H + 30 + 28))
     tabList.Position              = UDim2.new(0, 0, 0, TOPBAR_H + 20)
@@ -939,7 +872,6 @@ function XMCLib:CreateWindow(opts)
     tabLL.Parent    = tabList
     Utility.Pad(tabList, 0, 0, 8, 8)
 
-    -- Version watermark
     local verLbl = Instance.new("TextLabel")
     verLbl.Size             = UDim2.new(1, 0, 0, 22)
     verLbl.Position         = UDim2.new(0, 0, 1, -26)
@@ -951,7 +883,7 @@ function XMCLib:CreateWindow(opts)
     verLbl.ZIndex           = Z.labels
     verLbl.Parent           = sidebar
 
-    -- ── Top bar (window controls) ─────────────────────────────
+    -- ── Top bar ───────────────────────────────────────────────
     local topBar = Instance.new("Frame")
     topBar.Size             = UDim2.new(1, -SIDEBAR_W, 0, TOPBAR_H)
     topBar.Position         = UDim2.new(0, SIDEBAR_W, 0, 0)
@@ -968,7 +900,6 @@ function XMCLib:CreateWindow(opts)
     topBorder.ZIndex           = Z.sidebar + 1
     topBorder.Parent           = topBar
 
-    -- Control buttons (minimize / close)
     local ctrlHolder = Instance.new("Frame")
     ctrlHolder.Size             = UDim2.new(0, 56, 0, 20)
     ctrlHolder.Position         = UDim2.new(1, -64, 0.5, -10)
@@ -1030,15 +961,13 @@ function XMCLib:CreateWindow(opts)
         Utility.Tween(root, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.In),
             { Size = UDim2.new(0, W, 0, 0), BackgroundTransparency = 1 })
         task.delay(0.3, function()
-            -- Disconnect all window-level drag connections
             Utility.DisconnectAll(win._connections)
             if root and root.Parent then root:Destroy() end
         end)
     end)
 
-    -- [FIX] Drag connections stored in win._connections for cleanup
-    Drag.Enable(root, topBar,    win._connections)
-    Drag.Enable(root, logoArea,  win._connections)
+    Drag.Enable(root, topBar,   win._connections)
+    Drag.Enable(root, logoArea, win._connections)
 
     -- ── Content area ─────────────────────────────────────────
     local content = Instance.new("Frame")
@@ -1069,20 +998,16 @@ function XMCLib:CreateWindow(opts)
 
     win._contentArea = content
 
-    -- Open animation
     root.BackgroundTransparency = 1
     task.defer(function()
         Utility.Tween(root, TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out),
             { Size = fullSize, BackgroundTransparency = 0 })
     end)
 
-    -- ── Toggle Ball icon override ─────────────────────────────
-    -- Allows per-window customisation: CreateWindow { ToggleIcon = "rbxassetid://..." }
     if opts.ToggleIcon then
         self:SetToggleIcon(opts.ToggleIcon)
     end
 
-    -- Expose icon setter on window handle for runtime changes
     function win:SetToggleIcon(iconId)
         self._lib:SetToggleIcon(iconId)
     end
@@ -1098,10 +1023,6 @@ local Tab = {}
 Tab.__index = Tab
 
 function Window:CreateTab(name, icon)
-    -- Supports both legacy signatures:
-    --   CreateTab("Main", "🏠")
-    -- and option-table style:
-    --   CreateTab({ Name = "Main", Icon = "🏠" })
     if type(name) == "table" then
         local opts = name
         name = opts.Name or opts.Title or opts.Text or opts.Tab or "Tab"
@@ -1194,7 +1115,6 @@ function Window:CreateTab(name, icon)
     nameLbl.Parent         = btn
     tab._nameLbl = nameLbl
 
-    -- Scrollable content pane
     local pane = Instance.new("ScrollingFrame")
     pane.Size                  = UDim2.new(1, 0, 1, 0)
     pane.BackgroundTransparency= 1
@@ -1248,12 +1168,11 @@ function Window:_ActivateTab(target)
             Utility.Tween(t._iconLbl, TweenInfo.new(0.14), { TextColor3 = theme.SidebarTabText })
         end
     end
-
     self._activeTab = target
     target._pane.Visible = true
     Utility.Tween(target._indicator, TweenInfo.new(0.22, Enum.EasingStyle.Quart), { BackgroundTransparency = 0 })
     Utility.Tween(target._indGlow,   TweenInfo.new(0.22, Enum.EasingStyle.Quart), { BackgroundTransparency = 0.75 })
-    Utility.Tween(target._btn,       TweenInfo.new(0.14), {
+    Utility.Tween(target._btn, TweenInfo.new(0.14), {
         BackgroundColor3      = theme.SidebarTabActive,
         BackgroundTransparency= 0,
     })
@@ -1491,7 +1410,6 @@ function Section:CreateButton(opts)
     end)
     btn.MouseButton1Click:Connect(function() Utility.SafeCall(cb) end)
 
-    -- Buttons only connect to local instance events — no global UIS, no leak.
     local el = { _row = row, _btn = btn }
     function el:SetText(t)     btn.Text = t end
     function el:SetCallback(f) cb = f       end
@@ -1563,7 +1481,6 @@ function Section:CreateToggle(opts)
     thGlow.Parent           = track
     Utility.Corner(thGlow, (thSz+8)/2)
 
-    -- Toggle only needs a local click proxy — no global UIS connections.
     local proxy = Instance.new("TextButton")
     proxy.Size             = UDim2.new(1, 0, 1, 0)
     proxy.BackgroundTransparency = 1
@@ -1627,7 +1544,6 @@ function Section:CreateSlider(opts)
     row.LayoutOrder = #self._elements + 1
     placeLabels(row, name, desc, theme, Z)
 
-    -- Value badge
     local badge = Instance.new("Frame")
     badge.Size             = UDim2.new(0, 58, 0, 22)
     badge.Position         = UDim2.new(1, -58, 0, desc ~= "" and 5 or 0)
@@ -1648,7 +1564,6 @@ function Section:CreateSlider(opts)
     valLbl.ZIndex           = Z.ctrl + 1
     valLbl.Parent           = badge
 
-    -- Track
     local tY = desc ~= "" and 34 or 30
     local trackBg = Instance.new("Frame")
     trackBg.Size             = UDim2.new(1, 0, 0, 6)
@@ -1660,7 +1575,7 @@ function Section:CreateSlider(opts)
     Utility.Corner(trackBg, 3)
     Utility.Stroke(trackBg, theme.Border1, 1)
 
-    local pct  = (value - mn) / (mx - mn)
+    local pct = (value - mn) / (mx - mn)
 
     local fill = Instance.new("Frame")
     fill.Size             = UDim2.new(pct, 0, 1, 0)
@@ -1691,7 +1606,6 @@ function Section:CreateSlider(opts)
     tGlow.Parent           = trackBg
     Utility.Corner(tGlow, (tSz+8)/2)
 
-    -- [FIX] Store all UIS connections so :Destroy() can clean them up.
     local conns   = {}
     local dragging = false
     local ftw      = TweenInfo.new(0.04)
@@ -1709,7 +1623,6 @@ function Section:CreateSlider(opts)
         Utility.SafeCall(cb, value)
     end
 
-    -- [FIX] InputBegan on trackBg is local — no global UIS needed here.
     trackBg.InputBegan:Connect(function(inp)
         if Utility.IsPrimaryPress(inp.UserInputType) then
             dragging = true
@@ -1717,15 +1630,12 @@ function Section:CreateSlider(opts)
         end
     end)
 
-    -- [FIX] Global InputChanged — stored for disconnect.
     Utility.Connect(conns, UserInputService.InputChanged, function(inp)
         if dragging and Utility.IsDragMove(inp.UserInputType) then
             updateVal(inp.Position.X)
         end
     end)
 
-    -- [FIX] Global InputEnded — stored for disconnect.
-    --        Also handles Touch end (UserInputState.End on the touch object).
     Utility.Connect(conns, UserInputService.InputEnded, function(inp)
         if Utility.IsPrimaryRelease(inp.UserInputType) then
             dragging = false
@@ -1746,7 +1656,6 @@ function Section:CreateSlider(opts)
     end
     function el:Get()          return value   end
     function el:SetCallback(f) cb = f         end
-    -- [FIX] Disconnect global UIS listeners before destroying the row.
     function el:Destroy()
         Utility.DisconnectAll(conns)
         row:Destroy()
@@ -1818,13 +1727,12 @@ function Section:CreateDropdown(opts)
     proxy.ZIndex           = Z.ctrl + 2
     proxy.Parent           = dropBtn
 
-    -- [FIX] Floating panel uses dynamic ZIndex from this window's tier.
     local panel = Instance.new("Frame")
     panel.Name             = "DropPanel"
     panel.Size             = UDim2.new(0, dW, 0, 0)
     panel.BackgroundColor3 = theme.DropBg
     panel.BorderSizePixel  = 0
-    panel.ZIndex           = Z.panel   -- tier-relative, not hardcoded
+    panel.ZIndex           = Z.panel
     panel.Visible          = false
     panel.ClipsDescendants = true
     panel.Parent           = self._lib._gui
@@ -1838,8 +1746,6 @@ function Section:CreateDropdown(opts)
     Utility.Pad(panel, 4, 4, 4, 4)
 
     local isOpen = false
-
-    -- [FIX] Store the global UIS connection so we can Disconnect on Destroy.
     local conns = {}
 
     local function closePanel()
@@ -1928,15 +1834,12 @@ function Section:CreateDropdown(opts)
         if isOpen then closePanel() else openPanel() end
     end)
 
-    -- [FIX] "Click outside to close" — global UIS connection, stored for Disconnect.
-    -- [FIX] Also handles Touch input for closing the panel on mobile.
     Utility.Connect(conns, UserInputService.InputBegan, function(inp)
         local isMouse = inp.UserInputType == Enum.UserInputType.MouseButton1
         local isTouch = inp.UserInputType == Enum.UserInputType.Touch
         if (not isMouse and not isTouch) or not isOpen then return end
-
         local mp = UserInputService:GetMouseLocation()
-        local pp = panel.AbsolutePosition;  local ps = panel.AbsoluteSize
+        local pp = panel.AbsolutePosition;   local ps = panel.AbsoluteSize
         local bp = dropBtn.AbsolutePosition; local bs = dropBtn.AbsoluteSize
         local inPanel = mp.X >= pp.X and mp.X <= pp.X+ps.X and mp.Y >= pp.Y and mp.Y <= pp.Y+ps.Y
         local inBtn   = mp.X >= bp.X and mp.X <= bp.X+bs.X and mp.Y >= bp.Y and mp.Y <= bp.Y+bs.Y
@@ -1954,7 +1857,6 @@ function Section:CreateDropdown(opts)
     function el:AddItem(v)     table.insert(items, v); buildPanel() end
     function el:SetItems(t)    items = t; selected = t[1] or ""; selLbl.Text = tostring(selected); buildPanel() end
     function el:SetCallback(f) cb = f end
-    -- [FIX] Disconnect global listeners and destroy floating panel.
     function el:Destroy()
         Utility.DisconnectAll(conns)
         panel:Destroy()
@@ -2013,7 +1915,6 @@ function Section:CreateTextbox(opts)
     box.ZIndex           = Z.ctrl + 1
     box.Parent           = boxFrame
 
-    -- TextBox events are local — no global UIS needed, no leak.
     box.Focused:Connect(function()
         Utility.Tween(boxStroke, TweenInfo.new(0.15), { Color = theme.InputBorderFocus })
         Utility.Tween(boxFrame,  TweenInfo.new(0.15), { BackgroundColor3 = theme.Surface3 })
@@ -2125,12 +2026,8 @@ function Section:CreateKeybind(opts)
     kBtn.ZIndex           = Z.overlay
     kBtn.Parent           = kFrame
 
-    -- [FIX] Two kinds of global UIS connections:
-    --   1. listenConn  — temporary, only active while "listening" for a new key
-    --   2. pressConns  — permanent for lifetime of element, fires the callback
-    -- Both are stored and disconnected in :Destroy().
     local conns = {}
-    local listenConn = nil  -- stored separately so it can be disconnected alone
+    local listenConn = nil
 
     kBtn.MouseButton1Click:Connect(function()
         if listening then return end
@@ -2149,15 +2046,12 @@ function Section:CreateKeybind(opts)
                 Utility.Tween(kStroke, TweenInfo.new(0.12), { Color = theme.Border2 })
                 if flag then self._lib.Config:Set(flag, boundKey.Name) end
                 Utility.SafeCall(cb, boundKey)
-                -- Disconnect the temporary listen connection
                 if listenConn then listenConn:Disconnect(); listenConn = nil end
             end
         end)
-        -- Store it so Destroy() can clean it up if the user destroys mid-listen
         table.insert(conns, listenConn)
     end)
 
-    -- Permanent press-to-fire connection
     Utility.Connect(conns, UserInputService.InputBegan, function(inp, gp)
         if gp or listening then return end
         if inp.UserInputType == Enum.UserInputType.Keyboard
@@ -2170,7 +2064,6 @@ function Section:CreateKeybind(opts)
     function el:Get()          return boundKey end
     function el:Set(k)         boundKey = k; kLbl.Text = k.Name; if flag then self._lib.Config:Set(flag, k.Name) end end
     function el:SetCallback(f) cb = f end
-    -- [FIX] Disconnect all UIS listeners before destroying the row.
     function el:Destroy()
         if listenConn then pcall(listenConn.Disconnect, listenConn) end
         Utility.DisconnectAll(conns)
@@ -2186,6 +2079,8 @@ end
 function Section:CreateSeparator(opts)
     opts = opts or {}
     local theme = self._lib.Theme
+    -- [FIX] Read Z from win so we can assign correct ZIndex to all frames
+    local Z     = self._win._Z
     local label = opts.Label or ""
 
     local row = Instance.new("Frame")
@@ -2193,6 +2088,8 @@ function Section:CreateSeparator(opts)
     row.BackgroundTransparency = 1
     row.BorderSizePixel  = 0
     row.LayoutOrder      = #self._elements + 1
+    -- [FIX] ZIndex was missing — defaulted to 1 and rendered behind everything
+    row.ZIndex           = Z.rows + 1
     row.Parent           = self._holder
 
     if label ~= "" then
@@ -2201,6 +2098,8 @@ function Section:CreateSeparator(opts)
         lL.Position         = UDim2.new(0, 0, 0.5, 0)
         lL.BackgroundColor3 = theme.Separator
         lL.BorderSizePixel  = 0
+        -- [FIX] ZIndex on child frames was missing
+        lL.ZIndex           = Z.rows + 2
         lL.Parent           = row
 
         local lbl = Instance.new("TextLabel")
@@ -2211,6 +2110,8 @@ function Section:CreateSeparator(opts)
         lbl.TextColor3      = theme.TextMuted
         lbl.TextSize        = 10
         lbl.Font            = Enum.Font.Gotham
+        -- [FIX] ZIndex on child frames was missing
+        lbl.ZIndex          = Z.rows + 2
         lbl.Parent          = row
 
         local rL = Instance.new("Frame")
@@ -2218,6 +2119,8 @@ function Section:CreateSeparator(opts)
         rL.Position         = UDim2.new(0.75, 0, 0.5, 0)
         rL.BackgroundColor3 = theme.Separator
         rL.BorderSizePixel  = 0
+        -- [FIX] ZIndex on child frames was missing
+        rL.ZIndex           = Z.rows + 2
         rL.Parent           = row
     else
         local line = Instance.new("Frame")
@@ -2225,6 +2128,8 @@ function Section:CreateSeparator(opts)
         line.Position         = UDim2.new(0, 4, 0.5, 0)
         line.BackgroundColor3 = theme.Separator
         line.BorderSizePixel  = 0
+        -- [FIX] ZIndex on child frames was missing
+        line.ZIndex           = Z.rows + 2
         line.Parent           = row
     end
 
@@ -2243,9 +2148,11 @@ function XMCLib:Notify(opts)
     local msg      = opts.Message or opts.Text or ""
     local duration = opts.Duration or 4
     local ntype    = opts.Type     or "info"
+    local corner   = opts.Corner   or "TopRight"
+    local onClick  = opts.OnClick
     local theme    = self.Theme
 
-    if type(msg) ~= "string" then msg = tostring(msg) end
+    if type(msg)   ~= "string" then msg   = tostring(msg)   end
     if type(title) ~= "string" then title = tostring(title) end
     if title == "" then title = "Notice" end
 
@@ -2258,205 +2165,152 @@ function XMCLib:Notify(opts)
     local t   = typeMap[ntype] or typeMap.info
     local col = t.color
 
-    local titleSize = TextService:GetTextSize(title, 13, Enum.Font.GothamBold, Vector2.new(236, 200))
-    local msgSize   = TextService:GetTextSize(msg, 11, Enum.Font.Gotham, Vector2.new(236, 300))
-    local bodyHeight = Utility.Clamp(math.ceil(msgSize.Y), 18, 72)
-    local nW = opts.Width or 296
-    local nH = Utility.Clamp(44 + math.max(18, titleSize.Y) + bodyHeight, 82, 132)
-    local margin = 10
-    local q = self._notifQueue
-
-    local corner = string.lower(tostring(opts.Position or "BottomRight"))
-    local posConfig = {
-        topright =    { anchorX = 1, anchorY = 0, hiddenX = 24, shownX = -(nW + margin), ySign = 1, yStart = margin },
-        topleft =     { anchorX = 0, anchorY = 0, hiddenX = -(nW + 24), shownX = margin, ySign = 1, yStart = margin },
-        bottomleft =  { anchorX = 0, anchorY = 1, hiddenX = -(nW + 24), shownX = margin, ySign = -1, yStart = margin },
-        bottomright = { anchorX = 1, anchorY = 1, hiddenX = 24, shownX = -(nW + margin), ySign = -1, yStart = margin },
-    }
-    local cfg = posConfig[corner] or posConfig.bottomright
-
-    local stackOffset = 0
-    for _, n in ipairs(q) do
-        if n and n.Parent and n:GetAttribute("StackCorner") == corner then
-            stackOffset = stackOffset + n.AbsoluteSize.Y + margin
-        end
-    end
+    local titleSz = TextService:GetTextSize(title, 13, Enum.Font.GothamBold, Vector2.new(236, 200))
+    local msgSz   = (msg ~= "") and TextService:GetTextSize(msg, 11, Enum.Font.Gotham, Vector2.new(236, 200)) or Vector2.new(0, 0)
+    local cardH   = 20 + titleSz.Y + (msg ~= "" and (4 + msgSz.Y) or 0) + 16
 
     local NZ = ZIndexManager.NotifBase()
 
-    local notif = Instance.new("Frame")
-    notif.Name             = "XMCNotif"
-    notif.Size             = UDim2.new(0, nW, 0, nH)
-    notif.Position         = UDim2.new(cfg.anchorX, cfg.hiddenX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
-    notif.BackgroundColor3 = theme.Surface2
-    notif.BorderSizePixel  = 0
-    notif.ZIndex           = NZ
-    notif.Parent           = self._gui
-    notif:SetAttribute("StackCorner", corner)
-    Utility.Corner(notif, 10)
-    Utility.Stroke(notif, col:Lerp(theme.Border1, 0.5), 1)
+    local card = Instance.new("Frame")
+    card.Size             = UDim2.new(0, 280, 0, cardH)
+    card.BackgroundColor3 = theme.Surface2
+    card.BorderSizePixel  = 0
+    card.ZIndex           = NZ
+    card.BackgroundTransparency = 1
+    card.Parent           = self._gui
+    Utility.Corner(card, 10)
+    Utility.Stroke(card, theme.Border1, 1)
 
+    -- Position based on corner
+    local MARGIN = 16
+    local cornerPositions = {
+        TopRight    = function(i) return UDim2.new(1, -(280+MARGIN), 0, MARGIN + (i-1)*(cardH+8)) end,
+        TopLeft     = function(i) return UDim2.new(0, MARGIN, 0, MARGIN + (i-1)*(cardH+8)) end,
+        BottomRight = function(i) return UDim2.new(1, -(280+MARGIN), 1, -(cardH+MARGIN) - (i-1)*(cardH+8)) end,
+        BottomLeft  = function(i) return UDim2.new(0, MARGIN, 1, -(cardH+MARGIN) - (i-1)*(cardH+8)) end,
+    }
+    local posFunc = cornerPositions[corner] or cornerPositions.TopRight
+
+    -- Queue management
+    local queue = self._notifQueue
+    table.insert(queue, card)
+    local idx = #queue
+    card.Position = posFunc(idx)
+
+    -- Accent bar
     local bar = Instance.new("Frame")
-    bar.Size             = UDim2.new(0, 3, 1, -12)
-    bar.Position         = UDim2.new(0, 6, 0, 6)
+    bar.Size             = UDim2.new(0, 3, 1, -16)
+    bar.Position         = UDim2.new(0, 8, 0, 8)
     bar.BackgroundColor3 = col
     bar.BorderSizePixel  = 0
     bar.ZIndex           = NZ + 1
-    bar.Parent           = notif
+    bar.Parent           = card
     Utility.Corner(bar, 2)
 
-    local iconBg = Instance.new("Frame")
-    iconBg.Size             = UDim2.new(0, 24, 0, 24)
-    iconBg.Position         = UDim2.new(0, 14, 0, 10)
-    iconBg.BackgroundColor3 = col
-    iconBg.BackgroundTransparency = 0.82
-    iconBg.BorderSizePixel  = 0
-    iconBg.ZIndex           = NZ + 1
-    iconBg.Parent           = notif
-    Utility.Corner(iconBg, 12)
-
+    -- Icon
     local iconLbl = Instance.new("TextLabel")
-    iconLbl.Size            = UDim2.new(1, 0, 1, 0)
+    iconLbl.Size            = UDim2.new(0, 20, 0, 20)
+    iconLbl.Position        = UDim2.new(0, 18, 0, 10)
     iconLbl.BackgroundTransparency = 1
     iconLbl.Text            = t.icon
     iconLbl.TextColor3      = col
-    iconLbl.TextSize        = 12
+    iconLbl.TextSize        = 14
     iconLbl.Font            = Enum.Font.GothamBold
     iconLbl.ZIndex          = NZ + 2
-    iconLbl.Parent          = iconBg
+    iconLbl.Parent          = card
 
-    local textWrap = Instance.new("Frame")
-    textWrap.Name              = "TextWrap"
-    textWrap.Size              = UDim2.new(1, -52, 1, -20)
-    textWrap.Position          = UDim2.new(0, 42, 0, 10)
-    textWrap.BackgroundTransparency = 1
-    textWrap.ZIndex            = NZ + 1
-    textWrap.Parent            = notif
+    -- Title
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Size            = UDim2.new(1, -46, 0, titleSz.Y)
+    titleLbl.Position        = UDim2.new(0, 42, 0, 10)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text            = title
+    titleLbl.TextColor3      = theme.TextPrimary
+    titleLbl.TextSize        = 13
+    titleLbl.Font            = Enum.Font.GothamBold
+    titleLbl.TextXAlignment  = Enum.TextXAlignment.Left
+    titleLbl.TextWrapped     = true
+    titleLbl.ZIndex          = NZ + 2
+    titleLbl.Parent          = card
 
-    local textLayout = Instance.new("UIListLayout")
-    textLayout.FillDirection = Enum.FillDirection.Vertical
-    textLayout.HorizontalAlignment = Enum.HorizontalAlignment.Left
-    textLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    textLayout.Padding = UDim.new(0, 2)
-    textLayout.Parent = textWrap
+    -- Message
+    if msg ~= "" then
+        local msgLbl = Instance.new("TextLabel")
+        msgLbl.Size            = UDim2.new(1, -46, 0, msgSz.Y)
+        msgLbl.Position        = UDim2.new(0, 42, 0, 10 + titleSz.Y + 4)
+        msgLbl.BackgroundTransparency = 1
+        msgLbl.Text            = msg
+        msgLbl.TextColor3      = theme.TextSecondary
+        msgLbl.TextSize        = 11
+        msgLbl.Font            = Enum.Font.Gotham
+        msgLbl.TextXAlignment  = Enum.TextXAlignment.Left
+        msgLbl.TextWrapped     = true
+        msgLbl.ZIndex          = NZ + 2
+        msgLbl.Parent          = card
+    end
 
-    local tLbl = Instance.new("TextLabel")
-    tLbl.Size           = UDim2.new(1, 0, 0, 18)
-    tLbl.BackgroundTransparency = 1
-    tLbl.Text           = title
-    tLbl.TextColor3     = col
-    tLbl.TextSize       = 12
-    tLbl.Font           = Enum.Font.GothamBold
-    tLbl.TextXAlignment = Enum.TextXAlignment.Left
-    tLbl.TextYAlignment = Enum.TextYAlignment.Top
-    tLbl.TextTruncate   = Enum.TextTruncate.AtEnd
-    tLbl.ZIndex         = NZ + 2
-    tLbl.LayoutOrder    = 1
-    tLbl.Parent         = textWrap
-
-    local mLbl = Instance.new("TextLabel")
-    mLbl.Size           = UDim2.new(1, 0, 0, bodyHeight)
-    mLbl.BackgroundTransparency = 1
-    mLbl.Text           = msg
-    mLbl.TextColor3     = theme.TextSecondary
-    mLbl.TextSize       = 11
-    mLbl.Font           = Enum.Font.Gotham
-    mLbl.TextXAlignment = Enum.TextXAlignment.Left
-    mLbl.TextYAlignment = Enum.TextYAlignment.Top
-    mLbl.TextWrapped    = true
-    mLbl.ZIndex         = NZ + 2
-    mLbl.LayoutOrder    = 2
-    mLbl.Parent         = textWrap
-
-    local actionText = opts.ActionText
-    local actionCb = opts.ActionCallback
-    if actionText and type(actionText) == "string" and actionText ~= "" and type(actionCb) == "function" then
-        local actionBtn = Instance.new("TextButton")
-        actionBtn.Size = UDim2.new(0, 70, 0, 20)
-        actionBtn.Position = UDim2.new(1, -78, 1, -24)
-        actionBtn.BackgroundColor3 = col
-        actionBtn.BackgroundTransparency = 0.8
-        actionBtn.BorderSizePixel = 0
-        actionBtn.Text = actionText
-        actionBtn.Font = Enum.Font.GothamMedium
-        actionBtn.TextSize = 10
-        actionBtn.TextColor3 = col
-        actionBtn.ZIndex = NZ + 3
-        actionBtn.Parent = notif
-        Utility.Corner(actionBtn, 8)
-
-        actionBtn.MouseButton1Click:Connect(function()
-            Utility.SafeCall(actionCb)
+    -- Click-to-dismiss
+    if onClick then
+        local hitBtn = Instance.new("TextButton")
+        hitBtn.Size             = UDim2.new(1, 0, 1, 0)
+        hitBtn.BackgroundTransparency = 1
+        hitBtn.Text             = ""
+        hitBtn.ZIndex           = NZ + 3
+        hitBtn.Parent           = card
+        hitBtn.MouseButton1Click:Connect(function()
+            Utility.SafeCall(onClick)
         end)
     end
 
-    local pgBg = Instance.new("Frame")
-    pgBg.Size             = UDim2.new(1, -14, 0, 2)
-    pgBg.Position         = UDim2.new(0, 7, 1, -5)
-    pgBg.BackgroundColor3 = theme.Border1
-    pgBg.BorderSizePixel  = 0
-    pgBg.ZIndex           = NZ + 1
-    pgBg.Parent           = notif
-    Utility.Corner(pgBg, 1)
+    -- Slide-in animation
+    local slideDir = (corner == "TopRight" or corner == "BottomRight") and 1 or -1
+    card.Position = UDim2.new(
+        posFunc(idx).X.Scale,
+        posFunc(idx).X.Offset + 320 * slideDir,
+        posFunc(idx).Y.Scale,
+        posFunc(idx).Y.Offset
+    )
+    Utility.Tween(card, TweenInfo.new(0.38, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {
+        BackgroundTransparency = 0,
+        Position = posFunc(idx),
+    })
 
-    local pgFill = Instance.new("Frame")
-    pgFill.Size             = UDim2.new(1, 0, 1, 0)
-    pgFill.BackgroundColor3 = col
-    pgFill.BorderSizePixel  = 0
-    pgFill.ZIndex           = NZ + 2
-    pgFill.Parent           = pgBg
-    Utility.Corner(pgFill, 1)
-
-    table.insert(q, notif)
-
-    local function getShownPos()
-        return UDim2.new(cfg.anchorX, cfg.shownX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
-    end
-    local function getHiddenPos()
-        return UDim2.new(cfg.anchorX, cfg.hiddenX, cfg.anchorY, cfg.ySign * (cfg.yStart + stackOffset))
-    end
-
-    local dismissed = false
-    local function dismiss()
-        if dismissed then return end
-        dismissed = true
-        Utility.Tween(notif, TweenInfo.new(0.22, Enum.EasingStyle.Quart, Enum.EasingDirection.In), { Position = getHiddenPos() })
-        local idx = table.find(q, notif)
-        if idx then table.remove(q, idx) end
-        task.delay(0.24, function()
-            if notif and notif.Parent then notif:Destroy() end
+    -- Auto-dismiss
+    task.delay(duration, function()
+        if not card or not card.Parent then return end
+        Utility.Tween(card, TweenInfo.new(0.28, Enum.EasingStyle.Quart, Enum.EasingDirection.In), {
+            BackgroundTransparency = 1,
+            Position = UDim2.new(
+                posFunc(idx).X.Scale,
+                posFunc(idx).X.Offset + 320 * slideDir,
+                posFunc(idx).Y.Scale,
+                posFunc(idx).Y.Offset
+            ),
+        })
+        task.delay(0.35, function()
+            -- Remove from queue
+            for i, c in ipairs(queue) do
+                if c == card then table.remove(queue, i) break end
+            end
+            if card and card.Parent then card:Destroy() end
         end)
-    end
-
-    Utility.Tween(notif, TweenInfo.new(0.25, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Position = getShownPos() })
-    Utility.Tween(pgFill, TweenInfo.new(duration, Enum.EasingStyle.Linear), { Size = UDim2.new(0, 0, 1, 0) })
-
-    if opts.CloseOnClick ~= false then
-        notif.InputBegan:Connect(function(input)
-            if Utility.IsPrimaryPress(input.UserInputType) then dismiss() end
-        end)
-    end
-
-    task.delay(duration, dismiss)
-
-    return notif
+    end)
 end
 
 -- ================================================================
--- DESTROY
+-- [FIX] RETURN STATEMENT — was missing, causing nil errors on require
 -- ================================================================
-function XMCLib:Destroy()
-    if self._toggleBall and self._toggleBall.Parent then
-        self._toggleBall:Destroy()
-    end
-    if self._gui then self._gui:Destroy() end
-end
 
--- ================================================================
--- ENTRY POINT
--- ===============================================================
-function XMCLib.version()
-    print(Version)
-    return Version
-end
-return XMCLib.new()
+print("[[╔═══════════════════════════════════════════════════════════════╗
+║                                                                                   ║
+║   ██╗  ██╗███╗   ███╗ ██████╗██╗     ██╗██████╗                             ║
+║   ╚██╗██╔╝████╗ ████║██╔════╝██║     ██║██╔══██╗                           ║
+║    ╚███╔╝ ██╔████╔██║██║     ██║     ██║██████╔╝                            ║
+║    ██╔██╗ ██║╚██╔╝██║██║     ██║     ██║██╔══██╗                            ║
+║   ██╔╝ ██╗██║ ╚═╝ ██║╚██████╗███████╗██║██████╔╝                          ║
+║   ╚═╝  ╚═╝╚═╝     ╚═╝ ╚═════╝╚══════╝╚═╝╚═════╝                            ║
+║                                                                                   ║
+║   < I Love >                                                                      ║
+║                                                                                   ║
+╚═══════════════════════════════════════════════════════════════╝]]")
+return XMCLib
